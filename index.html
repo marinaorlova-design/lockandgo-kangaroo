@@ -1,0 +1,735 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lock&amp;go — Self Storage</title>
+<link rel="preload" href="assets/intro.mp4" as="video" type="video/mp4">
+<link rel="preload" href="assets/fonts/HandilPro-Medium.otf" as="font" type="font/otf" crossorigin>
+<style>
+  @font-face {
+    font-family: "Handil Pro";
+    src: local("Handil Pro Medium"), local("HandilPro-Medium"),
+         url("assets/fonts/HandilPro-Medium.otf") format("opentype");
+    font-weight: 500;
+    font-display: block;
+  }
+
+  :root {
+    --cream: #F9E3C6;
+    --orange: #FE6F00;
+    --dark: #0D0200;
+    /* 1 unit = 1px of the 1920×1080 design artboard */
+    --u: min(calc(100vw / 1920), calc(100vh / 1080));
+    /* headline unit: scales with the artboard above 1440, holds the 1440 size (0.75) down to ~825px,
+       then shrinks with the width so BELONGINGS always fits (≈79% of the screen) */
+    --hu: max(min(0.75px, calc(100vw / 1100)), var(--u));
+    /* UI unit (logo, menu, footer): never smaller than at 1440 */
+    --uu: max(0.75px, var(--u));
+    --ease-out: cubic-bezier(.16, 1, .3, 1);
+    --ease-io: cubic-bezier(.7, 0, .2, 1);
+    --helv: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* no scrollbar: it would appear when the intro unlocks scrolling and shift the scene sideways */
+  html { background: #fff; scrollbar-width: none; }
+  html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  body {
+    background: #fff;
+    color: var(--cream);
+    font-family: var(--helv);
+    -webkit-font-smoothing: antialiased;
+  }
+  body.is-locked { overflow: hidden; height: 100vh; touch-action: none; }
+  body.menu-open { overflow: hidden; }
+
+  /* ---------- stage ---------- */
+  .stage {
+    position: fixed; inset: 0;
+    overflow: hidden;
+    overflow: clip; /* hidden still allows script/focus scrolling of the oversized frame; clip doesn't */
+    background: #fff;
+  }
+  #seq, #dust {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+  }
+  /* box set from JS (same placement as canvas frame 0) */
+  #intro { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: fill; z-index: 2; transition: opacity .25s linear; }
+  #intro.is-gone { opacity: 0; pointer-events: none; }
+  #dust { z-index: 3; pointer-events: none; mix-blend-mode: screen; }
+  .shade {
+    position: absolute; inset: 0; z-index: 4; pointer-events: none; opacity: 0;
+    background:
+      radial-gradient(ellipse 46% 40% at 50% 54%, rgba(13,2,0,.38), rgba(13,2,0,0) 70%),
+      radial-gradient(ellipse 90% 90% at 50% 50%, rgba(13,2,0,0) 55%, rgba(13,2,0,.55) 100%);
+  }
+  .scroll-space { height: 520vh; }
+
+  /* ---------- scroll hint ---------- */
+  .hint {
+    position: absolute; left: 50%; bottom: 22px; z-index: 5;
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    color: var(--dark);
+    font: 700 11px/1 var(--helv); letter-spacing: .34em; text-indent: .34em;
+    opacity: 0;
+    transform: translate(-50%, 14px);
+    transition: opacity .7s var(--ease-out), transform .9s var(--ease-out);
+    pointer-events: none;
+  }
+  .hint.is-on { opacity: 1; transform: translate(-50%, 0); }
+  .hint-word { display: flex; }
+  .hint-word span {
+    display: inline-block; opacity: 0; transform: translateY(8px);
+    transition: opacity .5s var(--ease-out), transform .6s var(--ease-out);
+    transition-delay: calc(var(--i) * 60ms + 150ms);
+  }
+  .hint.is-on .hint-word span { opacity: .8; transform: none; }
+  /* dots cascade downward = "scroll down" */
+  .hint-dots { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .hint-dots b {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--orange);
+    opacity: .15;
+    animation: fall 1.6s cubic-bezier(.45, 0, .55, 1) infinite;
+    animation-delay: calc(var(--i) * 180ms);
+  }
+  .hint-dots b:nth-child(2) { width: 6px; height: 6px; }
+  .hint-dots b:nth-child(3) { width: 5px; height: 5px; }
+  @keyframes fall {
+    0%   { opacity: .15; transform: translateY(-5px) scale(.7); }
+    30%  { opacity: 1;   transform: translateY(0) scale(1); }
+    60%  { opacity: .15; transform: translateY(5px) scale(.7); }
+    100% { opacity: .15; transform: translateY(5px) scale(.7); }
+  }
+
+  /* ---------- final screen ---------- */
+  .final {
+    position: absolute; inset: 0; z-index: 6;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .final.is-live { pointer-events: auto; }
+  .final a { color: inherit; text-decoration: none; }
+
+  /* logo */
+  .logo {
+    position: absolute; left: calc(var(--uu) * 60); top: calc(var(--uu) * 56);
+    display: flex; width: calc(var(--uu) * 240); aspect-ratio: 714 / 232;
+  }
+  .logo-mark, .logo-type { height: 100%; background: url("assets/logo.png") no-repeat; }
+  .logo-mark {
+    width: 34.3%;
+    background-size: 291.5% 100%; background-position: 0 0;
+    transform-origin: 50% 100%;
+  }
+  .logo-type {
+    width: 65.7%;
+    background-size: 152.2% 100%; background-position: 100% 0;
+  }
+  .logo:hover .logo-mark, .logo-mark.hop { animation: hop .8s var(--ease-out); }
+  @keyframes hop {
+    0%   { transform: translateY(0) scale(1, 1); }
+    18%  { transform: translateY(0) scale(1.08, .88); }
+    45%  { transform: translateY(-26%) scale(.94, 1.08) rotate(-4deg); }
+    72%  { transform: translateY(0) scale(1.07, .92); }
+    86%  { transform: translateY(0) scale(.98, 1.02); }
+    100% { transform: translateY(0) scale(1, 1); }
+  }
+
+  /* nav */
+  .nav {
+    position: absolute; right: calc(var(--uu) * 58); top: calc(var(--uu) * 66);
+    display: flex; flex-direction: column; align-items: flex-end;
+    gap: calc(var(--uu) * 26);
+    list-style: none;
+  }
+  .nav li { overflow: hidden; padding: 0 2px; }
+  .nav .item-in { display: block; }
+  .roll {
+    display: block;
+    font: 400 calc(var(--uu) * 32)/1.04 var(--helv);
+    text-transform: uppercase; white-space: nowrap;
+    color: var(--cream);
+  }
+  .rc { display: inline-block; height: 1.04em; overflow: hidden; vertical-align: top; }
+  .rc > span {
+    display: block;
+    transition: transform .55s var(--ease-io);
+    transition-delay: calc(var(--i) * 16ms);
+  }
+  .rc > span + span { color: var(--orange); }
+  .roll:hover .rc > span, .roll:focus-visible .rc > span { transform: translateY(-100%); }
+  .roll:focus-visible { outline: none; }
+
+  /* headline */
+  .hero {
+    position: absolute; left: 50%; top: 51%;
+    transform: translate(-50%, -50%);
+    display: flex; flex-direction: column; align-items: center;
+    text-align: center;
+    will-change: transform;
+  }
+  .headline {
+    font-family: "Handil Pro", var(--helv);
+    font-weight: 500;
+    display: flex; flex-direction: column; align-items: center;
+    text-transform: uppercase;
+  }
+  .line {
+    display: block; white-space: nowrap;
+    clip-path: inset(-60% -10% -12% -10%);
+  }
+  .l1 { font-size: calc(var(--hu) * 142.5); letter-spacing: -.05em; line-height: .78; color: var(--cream); }
+  .l2 { font-size: calc(var(--hu) * 139);   letter-spacing: -.05em; line-height: .78; color: var(--orange);
+        margin-top: calc(var(--hu) * 11); cursor: default; }
+  .l3 { font-size: calc(var(--hu) * 67.5);  letter-spacing: 0;     line-height: 1;   color: var(--cream);
+        margin-top: calc(var(--hu) * 21); }
+  /* 3px outside stroke in the text's own colour: a centred 6px stroke, inner half hides under the fill */
+  .l1, .l2 {
+    -webkit-text-stroke: calc(var(--hu) * 6) currentColor;
+    paint-order: stroke fill;
+  }
+  .ch, .ci { display: inline-block; will-change: transform; }
+  .l2:hover .ch { animation: wave .7s var(--ease-out) both; animation-delay: calc(var(--i) * 38ms); }
+  @keyframes wave {
+    0%, 100% { transform: translateY(0); }
+    35% { transform: translateY(-14%) scale(1.02, .97); }
+    60% { transform: translateY(2%) scale(1.01, .99); }
+  }
+
+  /* CTA */
+  .cta {
+    position: relative; isolation: isolate; overflow: hidden;
+    margin-top: calc(var(--hu) * 51);
+    display: inline-flex; align-items: center; gap: 0;
+    padding: calc(var(--hu) * 16) calc(var(--hu) * 39);
+    border-radius: 999px;
+    background: var(--orange);
+    color: var(--dark) !important;
+    font: 700 calc(var(--hu) * 28)/1 var(--helv);
+    text-transform: uppercase; letter-spacing: .01em;
+    transition: gap .5s var(--ease-out), padding .5s var(--ease-out), box-shadow .5s var(--ease-out);
+    box-shadow: 0 0 0 rgba(254,111,0,0);
+  }
+  .cta::before {
+    content: ""; position: absolute; z-index: -1;
+    left: var(--x, 50%); top: var(--y, 50%);
+    width: 300%; aspect-ratio: 1; border-radius: 50%;
+    background: var(--cream);
+    transform: translate(-50%, -50%) scale(0);
+    transition: transform .6s var(--ease-out);
+  }
+  .cta:hover::before { transform: translate(-50%, -50%) scale(1); }
+  .cta:hover { box-shadow: 0 10px 50px -10px rgba(254,111,0,.65); gap: calc(var(--hu) * 14); }
+  .cta:active { transform: scale(.97); }
+  .cta .arr {
+    display: inline-block; width: 0; overflow: hidden;
+    transition: width .5s var(--ease-out);
+  }
+  .cta .arr svg { display: block; width: calc(var(--hu) * 26); height: auto; transform: translateX(-120%); transition: transform .5s var(--ease-out); }
+  .cta:hover .arr { width: calc(var(--hu) * 26); }
+  .cta:hover { gap: calc(var(--hu) * 14); }
+  .cta:hover .arr svg { transform: translateX(0); }
+  .cta-wrap { will-change: transform; }
+
+  /* footer */
+  .foot {
+    position: absolute; left: calc(var(--uu) * 58); right: calc(var(--uu) * 58);
+    bottom: calc(var(--uu) * 46);
+    display: flex; align-items: center; gap: calc(var(--uu) * 46);
+    font: 400 calc(var(--uu) * 24)/1 var(--helv);
+    text-transform: uppercase;
+  }
+  .foot-line { flex: 1; height: 1px; background: rgba(249,227,198,.45); transform-origin: 50% 50%; }
+  .ulink { position: relative; padding-bottom: 6px; transition: color .35s ease; }
+  .ulink::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+    background: var(--orange);
+    transform: scaleX(0); transform-origin: right;
+    transition: transform .5s var(--ease-io);
+  }
+  .ulink:hover { color: var(--orange); }
+  .ulink:hover::after { transform: scaleX(1); transform-origin: left; }
+
+  /* ---------- burger (below 800px) ---------- */
+  .burger, .menu { display: none; }
+
+  @media (max-width: 799px) {
+    .nav { display: none; }
+    .logo { left: max(20px, env(safe-area-inset-left)); top: max(20px, env(safe-area-inset-top)); width: 150px; z-index: 31; }
+    .hero { top: 50%; }
+    .cta { font-size: 16px; padding: 14px 30px; margin-top: 30px; }
+    .cta .arr svg { width: 15px; }
+    .cta:hover .arr { width: 15px; }
+    .cta:hover { gap: 9px; }
+    .foot {
+      left: max(20px, env(safe-area-inset-left)); right: max(20px, env(safe-area-inset-right));
+      bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px));
+      gap: 18px; font-size: 16px;
+    }
+
+    .burger {
+      display: block; position: absolute; z-index: 31;
+      right: max(12px, env(safe-area-inset-right)); top: max(12px, calc(env(safe-area-inset-top) - 4px));
+      width: 48px; height: 48px;
+      background: none; border: 0; cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .burger i {
+      position: absolute; left: 12px; right: 12px; height: 2px; border-radius: 2px;
+      background: var(--cream);
+      transition: transform .5s var(--ease-io), top .5s var(--ease-io), background .3s ease;
+    }
+    .burger i { transition: transform .5s var(--ease-io), top .5s var(--ease-io), opacity .3s ease; }
+    .burger i:nth-child(1) { top: 16px; }
+    .burger i:nth-child(2) { top: 23px; }
+    .burger i:nth-child(3) { top: 30px; }
+    .burger:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; border-radius: 8px; }
+    .is-menu .burger i:nth-child(1) { top: 23px; transform: rotate(45deg); }
+    .is-menu .burger i:nth-child(2) { opacity: 0; transform: scaleX(.2); }
+    .is-menu .burger i:nth-child(3) { top: 23px; transform: rotate(-45deg); }
+
+    .menu {
+      display: flex; flex-direction: column; justify-content: center;
+      position: absolute; inset: 0; z-index: 30;
+      padding: 96px max(24px, env(safe-area-inset-right)) 96px max(24px, env(safe-area-inset-left));
+      align-items: center;
+      background: rgba(13, 2, 0, .9);
+      -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+      opacity: 0; visibility: hidden;
+      transition: opacity .45s var(--ease-out), visibility 0s linear .45s;
+    }
+    .is-menu .menu { opacity: 1; visibility: visible; transition: opacity .45s var(--ease-out), visibility 0s; }
+    .menu ul { list-style: none; display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center; }
+    .menu li { overflow: hidden; }
+    .menu li a {
+      display: block;
+      font: 400 clamp(22px, 6vw, 32px)/1.1 var(--helv);
+      text-transform: uppercase; color: var(--cream);
+      transform: translateY(105%);
+      transition: transform .7s var(--ease-out), color .3s ease;
+      transition-delay: 0s;
+    }
+    .is-menu .menu li a { transform: none; transition-delay: calc(var(--i) * 70ms + 120ms); }
+    .menu li a:active, .menu li a:hover { color: var(--orange); }
+    .menu-foot {
+      position: absolute; left: max(24px, env(safe-area-inset-left)); right: max(24px, env(safe-area-inset-right));
+      bottom: max(32px, calc(env(safe-area-inset-bottom) + 16px));
+      display: flex; justify-content: space-between;
+      font: 400 16px/1 var(--helv); text-transform: uppercase;
+      opacity: 0; transition: opacity .5s var(--ease-out);
+    }
+    .is-menu .menu-foot { opacity: 1; transition-delay: .45s; }
+    .menu-foot a:hover { color: var(--orange); }
+  }
+
+  @media (max-width: 799px) and (orientation: portrait) {
+    .shade {
+      background:
+        linear-gradient(to bottom, rgba(13,2,0,.55), rgba(13,2,0,0) 22%),
+        radial-gradient(ellipse 80% 30% at 50% 50%, rgba(13,2,0,.4), rgba(13,2,0,0) 70%),
+        radial-gradient(ellipse 120% 90% at 50% 50%, rgba(13,2,0,0) 55%, rgba(13,2,0,.55) 100%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hint-dots b, .l2:hover .ch, .logo:hover .logo-mark { animation: none; }
+  }
+</style>
+</head>
+<body class="is-locked">
+
+<div class="stage" id="stage">
+  <canvas id="seq" aria-hidden="true"></canvas>
+  <video id="intro" src="assets/intro.mp4" muted playsinline preload="auto" aria-hidden="true"></video>
+  <canvas id="dust" aria-hidden="true"></canvas>
+  <div class="shade" id="shade"></div>
+
+  <div class="hint" id="hint" aria-label="Scroll down">
+    <span class="hint-word"><span style="--i:0">S</span><span style="--i:1">C</span><span style="--i:2">R</span><span style="--i:3">O</span><span style="--i:4">L</span><span style="--i:5">L</span></span>
+    <span class="hint-dots"><b style="--i:0"></b><b style="--i:1"></b><b style="--i:2"></b></span>
+  </div>
+
+  <div class="final" id="final">
+    <a class="logo" href="#" aria-label="lock&amp;go self storage">
+      <span class="logo-mark" id="logoMark"></span>
+      <span class="logo-type"></span>
+    </a>
+
+    <ul class="nav">
+      <li><span class="item-in"><a class="roll" href="#">Storage guarantee</a></span></li>
+      <li><span class="item-in"><a class="roll" href="#">Storage conditions</a></span></li>
+      <li><span class="item-in"><a class="roll" href="#">Pricing</a></span></li>
+      <li><span class="item-in"><a class="roll" href="#">Reviews</a></span></li>
+    </ul>
+
+    <button class="burger" id="burger" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="menu"><i></i><i></i><i></i></button>
+    <nav class="menu" id="menu" aria-label="Menu">
+      <ul>
+        <li><a href="#" style="--i:0">Storage guarantee</a></li>
+        <li><a href="#" style="--i:1">Storage conditions</a></li>
+        <li><a href="#" style="--i:2">Pricing</a></li>
+        <li><a href="#" style="--i:3">Reviews</a></li>
+      </ul>
+      <div class="menu-foot"><a href="#">About us</a><a href="#">Contact us</a></div>
+    </nav>
+
+    <div class="hero" id="hero">
+      <h1 class="headline">
+        <span class="line l1" data-split>Keep your</span>
+        <span class="line l2" data-split>Belongings</span>
+        <span class="line l3">In a reliable place</span>
+      </h1>
+      <div class="cta-wrap" id="ctaWrap">
+        <a class="cta" id="cta" href="#">
+          <span>Choose a plan</span>
+          <span class="arr"><svg viewBox="0 0 26 16" fill="none"><path d="M0 8h23M16 1l7 7-7 7" stroke="currentColor" stroke-width="2.4"/></svg></span>
+        </a>
+      </div>
+    </div>
+
+    <div class="foot">
+      <a class="ulink f-left" href="#">About us</a>
+      <span class="foot-line"></span>
+      <a class="ulink f-right" href="#">Contact us</a>
+    </div>
+  </div>
+</div>
+
+<div class="scroll-space" aria-hidden="true"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script>
+(() => {
+  /* ================= config ================= */
+  const FRAMES = 242;               // v3 + v4
+  const SEQ_END = 0.86;             // part of the scroll that plays the frames
+  const FINAL_ON = 0.9, FINAL_OFF = 0.84;
+  const IMG_W = 1920, IMG_H = 1072;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // mouse parallax only with a real mouse/trackpad, never on phones and tablets
+  const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
+
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  window.scrollTo(0, 0);
+
+  const $ = s => document.querySelector(s);
+  const body = document.body;
+  const seq = $('#seq'), ctx = seq.getContext('2d');
+  const dust = $('#dust'), dctx = dust.getContext('2d');
+  const intro = $('#intro'), hint = $('#hint'), final = $('#final');
+  const hero = $('#hero');
+
+  /* ================= frames ================= */
+  const imgs = new Array(FRAMES);
+  for (let i = 0; i < FRAMES; i++) {
+    const im = new Image();
+    im.decoding = 'async';
+    im.src = `assets/frames/f${String(i + 1).padStart(3, '0')}.webp`;
+    im.onload = () => { if (Math.abs(i - Math.round(cur)) < 2) needsDraw = true; };
+    imgs[i] = im;
+  }
+  const nearest = i => {
+    for (let d = 0; d < FRAMES; d++) {
+      const a = imgs[i - d], b = imgs[i + d];
+      if (a && a.complete && a.naturalWidth) return a;
+      if (b && b.complete && b.naturalWidth) return b;
+    }
+    return null;
+  };
+
+  /* optional seamless loop for the final scene (generate in Kling, drop in assets/) */
+  const loop = document.createElement('video');
+  let hasLoop = false;
+  Object.assign(loop, { muted: true, loop: true, playsInline: true, preload: 'auto' });
+  loop.addEventListener('loadeddata', () => { hasLoop = true; });
+  loop.src = 'assets/final-loop.mp4';
+
+  /* ================= sizing ================= */
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = document.documentElement.clientWidth || innerWidth; H = innerHeight;
+    for (const c of [seq, dust]) { c.width = Math.round(W * DPR); c.height = Math.round(H * DPR); }
+    placeIntro();
+    needsDraw = true;
+    onScroll();
+  }
+
+  /* Frame placement.
+     White-stage shots (intro + first scroll frames) are framed around the kangaroo itself so it is whole and
+     centred on any screen — the frame's edges are pure white, so a frame smaller than the screen is seamless.
+     As the camera pushes in, the frame eases to a full-bleed "cover" fit. */
+  // area the kangaroo uses in the white-stage shots, in source px (union of the sitting and standing poses)
+  const ROO = { cx: 942, cy: 544, w: 845, h: 952 };
+  const FIT_FRAMES = 40;
+  function startRect() {
+    const sC = Math.max(W / IMG_W, H / IMG_H);
+    const s = Math.min(sC * 0.86, 0.9 * W / ROO.w, 0.78 * H / ROO.h);
+    return { s, x: W / 2 - ROO.cx * s, y: Math.max(0, 0.42 * H - ROO.cy * s) };
+  }
+  function coverRect() {
+    const s = Math.max(W / IMG_W, H / IMG_H);
+    return { s, x: (W - IMG_W * s) / 2, y: (H - IMG_H * s) / 2 };
+  }
+  function place(c, zoom = 1, ox = 0, oy = 0) {
+    const A = startRect(), C = coverRect();
+    const k0 = Math.min(1, Math.max(0, c / FIT_FRAMES));
+    const k = k0 * k0 * (3 - 2 * k0); // smoothstep
+    let s = A.s + (C.s - A.s) * k, x = A.x + (C.x - A.x) * k, y = A.y + (C.y - A.y) * k;
+    // extra zoom (breathing / parallax) around the screen centre
+    x = W / 2 + (x - W / 2) * zoom; y = H / 2 + (y - H / 2) * zoom; s *= zoom;
+    return { s, x: x + ox, y: y + oy, w: IMG_W * s, h: IMG_H * s };
+  }
+  // the intro <video> uses exactly the same box as canvas frame 0, so the hand-off is pixel-identical
+  function placeIntro() {
+    const r = place(0);
+    Object.assign(intro.style, {
+      left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px`
+    });
+    // when the frame starts below the top of the screen, soften its top edge so the falling kangaroo
+    // doesn't appear out of a hard line
+    const fade = r.y > 8 ? `linear-gradient(to bottom, transparent 0, #000 ${Math.min(90, r.y)}px)` : 'none';
+    intro.style.webkitMaskImage = fade; intro.style.maskImage = fade;
+  }
+
+  /* ================= state ================= */
+  let introEndT = 0;
+  let introDone = false, target = 0, cur = 0, lastDrawn = -1, needsDraw = true;
+  let finalOn = false, loopAlpha = 0;
+  const mouse = { x: 0, y: 0, sx: 0, sy: 0 };
+  let par = 0; // parallax weight 0..1 (only on final scene)
+
+  function onScroll() {
+    const max = document.documentElement.scrollHeight - innerHeight;
+    const p = max > 0 ? Math.min(1, Math.max(0, scrollY / max)) : 0;
+    target = Math.min(1, p / SEQ_END) * (FRAMES - 1);
+    if (introDone) hint.classList.toggle('is-on', p < 0.015);
+    if (!finalOn && p >= FINAL_ON) showFinal();
+    else if (finalOn && p < FINAL_OFF) hideFinal();
+  }
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('resize', resize);
+  addEventListener('pointermove', e => {
+    mouse.x = (e.clientX / W) * 2 - 1;
+    mouse.y = (e.clientY / H) * 2 - 1;
+  }, { passive: true });
+
+  /* ================= intro ================= */
+  function endIntro() {
+    if (introDone) return;
+    introDone = true;
+    introEndT = performance.now() / 1000;
+    intro.classList.add('is-gone');
+    body.classList.remove('is-locked');
+    hint.classList.add('is-on');
+    needsDraw = true;
+  }
+  function skipFast() { if (!introDone && !intro.paused) intro.playbackRate = 3; }
+  intro.addEventListener('ended', endIntro);
+  intro.addEventListener('error', endIntro);
+  addEventListener('wheel', skipFast, { passive: true });
+  addEventListener('touchstart', skipFast, { passive: true });
+  addEventListener('keydown', skipFast);
+
+  if (reduce) endIntro();
+  else {
+    const start = () => intro.play().catch(endIntro);
+    // a short white beat before the fall
+    setTimeout(start, 150);
+  }
+
+  /* ================= text split ================= */
+  document.querySelectorAll('[data-split]').forEach(el => {
+    const t = el.textContent; el.textContent = '';
+    [...t].forEach((c, i) => {
+      const ch = document.createElement('span'); ch.className = 'ch'; ch.style.setProperty('--i', i);
+      const ci = document.createElement('span'); ci.className = 'ci';
+      ci.textContent = c === ' ' ? ' ' : c;
+      ch.appendChild(ci); el.appendChild(ch);
+    });
+    el.setAttribute('aria-label', t);
+  });
+  document.querySelectorAll('.roll').forEach(el => {
+    const t = el.textContent; el.textContent = ''; el.setAttribute('aria-label', t);
+    [...t].forEach((c, i) => {
+      const rc = document.createElement('span'); rc.className = 'rc'; rc.style.setProperty('--i', i);
+      rc.setAttribute('aria-hidden', 'true');
+      const ch = c === ' ' ? ' ' : c;
+      rc.innerHTML = `<span>${ch}</span><span>${ch}</span>`;
+      el.appendChild(rc);
+    });
+  });
+
+  /* ================= reveal timeline ================= */
+  const tl = gsap.timeline({ paused: true, defaults: { ease: 'power4.out' } });
+  tl.set(final, { visibility: 'visible' })
+    .to('#shade', { opacity: 1, duration: 1.2, ease: 'power2.out' }, 0)
+    .from('.l1 .ci', { yPercent: 130, rotate: 10, duration: 1, stagger: 0.035 }, 0.05)
+    .from('.l2 .ci', { yPercent: 130, rotate: 10, duration: 1.1, stagger: 0.04 }, 0.2)
+    .from('.l3', { opacity: 0, letterSpacing: '0.45em', filter: 'blur(10px)', duration: 1.3, ease: 'power3.out' }, 0.55)
+    .from('#ctaWrap', { opacity: 0, scale: 0.4, y: 20, duration: 0.9, ease: 'back.out(1.7)' }, 0.95)
+    .from('.logo', { opacity: 0, y: -24, duration: 0.9, ease: 'power3.out' }, 0.25)
+    .call(() => { const m = $('#logoMark'); m.classList.remove('hop'); void m.offsetWidth; m.classList.add('hop'); }, null, 0.6)
+    .from('.nav .item-in', { yPercent: 115, duration: 0.9, stagger: 0.08, ease: 'power3.out' }, 0.35)
+    .from('.foot-line', { scaleX: 0, duration: 1.4, ease: 'power3.inOut' }, 0.5)
+    .from('.f-left', { opacity: 0, x: -30, duration: 0.9, ease: 'power3.out' }, 0.9)
+    .from('.f-right', { opacity: 0, x: 30, duration: 0.9, ease: 'power3.out' }, 0.9)
+    .from('#burger', { opacity: 0, y: -16, duration: 0.8, ease: 'power3.out' }, 0.4);
+  $('#logoMark').addEventListener('animationend', e => e.target.classList.remove('hop'));
+
+  /* burger menu (below 800px) */
+  const burger = $('#burger');
+  function setMenu(open) {
+    final.classList.toggle('is-menu', open);
+    body.classList.toggle('menu-open', open);
+    burger.setAttribute('aria-expanded', String(open));
+    burger.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+  }
+  burger.addEventListener('click', () => setMenu(!final.classList.contains('is-menu')));
+  document.querySelectorAll('#menu a').forEach(a => a.addEventListener('click', () => setMenu(false)));
+  addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
+  addEventListener('resize', () => { if (innerWidth >= 800) setMenu(false); });
+
+  function showFinal() {
+    finalOn = true;
+    final.classList.add('is-live');
+    tl.timeScale(1).play();
+    if (hasLoop) loop.play().catch(() => {});
+  }
+  function hideFinal() {
+    finalOn = false;
+    setMenu(false);
+    final.classList.remove('is-live');
+    tl.timeScale(1.8).reverse();
+  }
+
+  /* magnetic CTA + fill origin follows the cursor */
+  const cta = $('#cta'), ctaWrap = $('#ctaWrap');
+  const mx = gsap.quickTo(ctaWrap, 'x', { duration: 0.5, ease: 'power3.out' });
+  const my = gsap.quickTo(ctaWrap, 'y', { duration: 0.5, ease: 'power3.out' });
+  cta.addEventListener('pointermove', e => {
+    const r = cta.getBoundingClientRect();
+    cta.style.setProperty('--x', `${e.clientX - r.left}px`);
+    cta.style.setProperty('--y', `${e.clientY - r.top}px`);
+    mx((e.clientX - (r.left + r.width / 2)) * 0.25);
+    my((e.clientY - (r.top + r.height / 2)) * 0.35);
+  });
+  cta.addEventListener('pointerenter', e => {
+    const r = cta.getBoundingClientRect();
+    cta.style.setProperty('--x', `${e.clientX - r.left}px`);
+    cta.style.setProperty('--y', `${e.clientY - r.top}px`);
+  });
+  cta.addEventListener('pointerleave', () => { mx(0); my(0); });
+
+  /* ================= dust in the light beam ================= */
+  // particle coordinates live in source-image space (0..1) so they stick to the beam
+  const beam = v => { // beam centre & half-width at height v (from the final frame)
+    const c = 0.47 + (v - 0.08) * 0.12;
+    const hw = 0.13 + (v - 0.08) * 0.05;
+    return { c, hw };
+  };
+  const P = [];
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  function spawn(p, anywhere) {
+    p.v = anywhere ? rnd(0.08, 0.86) : rnd(0.08, 0.86);
+    const b = beam(p.v);
+    const g = (Math.random() + Math.random() + Math.random()) / 3 - 0.5; // ~gaussian
+    p.u = b.c + g * b.hw * 2.4;
+    p.r = Math.random() < 0.08 ? rnd(2.4, 5) : rnd(0.5, 1.7);
+    p.vx = rnd(-0.004, 0.004); p.vy = rnd(-0.003, 0.006);
+    p.ph = rnd(0, Math.PI * 2); p.sp = rnd(0.4, 1.4);
+    p.life = 0; p.max = rnd(6, 14);
+    return p;
+  }
+  for (let i = 0; i < (innerWidth < 768 ? 70 : 140); i++) { const p = spawn({}, true); p.life = rnd(0, p.max); P.push(p); }
+
+  function drawDust(t, dt, alpha, m) {
+    dctx.setTransform(1, 0, 0, 1, 0, 0);
+    dctx.clearRect(0, 0, dust.width, dust.height);
+    if (alpha <= 0.001) return;
+    dctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    for (const p of P) {
+      p.life += dt;
+      if (p.life > p.max) spawn(p, false);
+      p.u += (p.vx + Math.sin(t * 0.4 + p.ph) * 0.0025) * dt;
+      p.v += (p.vy + Math.cos(t * 0.33 + p.ph) * 0.002) * dt;
+      const b = beam(p.v);
+      const inBeam = Math.max(0, 1 - Math.abs(p.u - b.c) / (b.hw * 1.15));
+      const fade = Math.min(1, p.life / 1.5, (p.max - p.life) / 1.5);
+      const tw = 0.55 + 0.45 * Math.sin(t * p.sp * 2 + p.ph);
+      const a = alpha * fade * tw * (0.12 + 0.88 * inBeam) * (p.r > 2.3 ? 0.35 : 0.9);
+      if (a <= 0.01) continue;
+      const x = m.x + p.u * m.w, y = m.y + p.v * m.h;
+      const r = p.r * Math.max(0.7, m.s * 1.1);
+      const g = dctx.createRadialGradient(x, y, 0, x, y, r * 2.2);
+      g.addColorStop(0, `rgba(255,232,196,${a})`);
+      g.addColorStop(0.4, `rgba(255,214,160,${a * 0.5})`);
+      g.addColorStop(1, 'rgba(255,200,140,0)');
+      dctx.fillStyle = g;
+      dctx.beginPath(); dctx.arc(x, y, r * 2.2, 0, Math.PI * 2); dctx.fill();
+    }
+  }
+
+  /* ================= render loop ================= */
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    const t = now / 1000;
+
+    // smooth scrub
+    const diff = target - cur;
+    cur = Math.abs(diff) < 0.01 ? target : cur + diff * 0.14;
+    const idx = Math.max(0, Math.min(FRAMES - 1, Math.round(cur)));
+
+    // parallax only on the final scene
+    par += ((finalOn && finePointer.matches ? 1 : 0) - par) * 0.06;
+    mouse.sx += (mouse.x - mouse.sx) * 0.06;
+    mouse.sy += (mouse.y - mouse.sy) * 0.06;
+    const ox = -mouse.sx * 14 * par, oy = -mouse.sy * 9 * par;
+
+    // idle "breathing" camera while waiting for the first scroll
+    const idle = introDone && cur < 0.5 && !reduce ? 1 : 0;
+    // phase starts at the hand-off from the intro video, so it ramps from exactly 0
+    const breathe = idle ? 0.006 * (0.5 - 0.5 * Math.cos((t - introEndT) * Math.PI * 2 / 5)) : 0;
+    const zoom = 1 + breathe + 0.035 * par;
+
+    loopAlpha += (((finalOn && hasLoop) ? 1 : 0) - loopAlpha) * 0.05;
+
+    const moving = idx !== lastDrawn || idle || par > 0.001 || loopAlpha > 0.001;
+    if (introDone && (needsDraw || moving)) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, seq.width, seq.height);
+      const m = place(cur, zoom, ox, oy);
+      const im = nearest(idx);
+      if (im) {
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        ctx.drawImage(im, m.x, m.y, m.w, m.h);
+        if (loopAlpha > 0.001 && loop.readyState >= 2) {
+          ctx.globalAlpha = loopAlpha;
+          ctx.drawImage(loop, m.x, m.y, m.w, m.h);
+          ctx.globalAlpha = 1;
+        }
+        lastDrawn = idx; needsDraw = false;
+      }
+    }
+
+    // dust fades in as we arrive inside the pouch
+    const dustA = Math.max(0, Math.min(1, (cur - (FRAMES - 32)) / 28)) * (hasLoop ? 0.55 : 1);
+    drawDust(t, dt, reduce ? 0 : dustA, place(cur, zoom, ox, oy));
+
+    // headline floats a touch against the background
+    hero.style.transform = `translate(calc(-50% + ${mouse.sx * 8 * par}px), calc(-50% + ${mouse.sy * 6 * par}px))`;
+
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
